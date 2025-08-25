@@ -1,0 +1,12 @@
+[package]
+name = "strudel"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mlua = { version = "0.11.2", features = ["luajit", "module", "macros"] }
+tokio = "1.47.1"
+tower = "0.5.2"
