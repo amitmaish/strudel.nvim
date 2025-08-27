@@ -1,14 +1,15 @@
-use std::ffi::c_void;
-use std::thread;
+use std::{ffi::c_void, thread};
 
 use axum::{Router, routing::get, serve};
 use mlua::chunk;
 use mlua::prelude::*;
-use tokio::sync::oneshot;
 use tokio::{
     net::TcpListener,
     runtime::Runtime,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{
+        mpsc::{Receiver, Sender, channel},
+        oneshot,
+    },
 };
 
 fn hello(lua: &Lua, name: String) -> LuaResult<LuaTable> {
