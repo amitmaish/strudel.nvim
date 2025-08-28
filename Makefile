@@ -6,3 +6,7 @@ lua/strudelserver.so: $(wildcard src/*)
 clean:
 	cargo clean
 	rm lua/strudelserver.so
+
+.PHONEY: webdev
+webdev:
+	( cd strudel-frontend/; npm run dev )
