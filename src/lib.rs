@@ -1,9 +1,11 @@
 use std::{ffi::c_void, thread};
 
-use axum::{Router, routing::get, serve};
+use axum::{Router, response::Html, routing::get, serve};
 use mlua::chunk;
 use mlua::prelude::*;
 use tokio::{
+    fs::File,
+    io::AsyncReadExt,
     net::TcpListener,
     runtime::Runtime,
     sync::{
@@ -11,6 +13,7 @@ use tokio::{
         oneshot,
     },
 };
+use tower_http::services::ServeDir;
 
 fn hello(lua: &Lua, name: String) -> LuaResult<LuaTable> {
     let t = lua.create_table()?;
@@ -116,7 +119,16 @@ impl App {
 
     fn run(&mut self) -> anyhow::Result<()> {
         self.runtime.block_on(async {
-            let app = Router::new().route("/", get(|| async { "Hello, World!\n" }));
+            let mut file = File::open("../strudel-frontend/dist/index.html").await?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).await?;
+
+            let app = Router::new()
+                .route("/", get(|| async move { Html::from(contents) }))
+                .nest_service(
+                    "/assets/",
+                    ServeDir::new("../strudel-frontend/dist/assets/"),
+                );
 
             let listener = TcpListener::bind("localhost:0").await?;
             self.port = Some(listener.local_addr()?.port());
