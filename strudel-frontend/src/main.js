@@ -1,27 +1,13 @@
-import "./style.css";
-import javascriptLogo from "./javascript.svg";
-import viteLogo from "/vite.svg";
-import { setupCounter } from "./counter.js";
+const app = document.querySelector("#app");
 
-document.querySelector("#app").innerHTML = `
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="${viteLogo}" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank">
-      <img src="${javascriptLogo}" class="logo vanilla" alt="JavaScript logo" />
-    </a>
-    <h1>Hello Vite!</h1>
-    <div class="card">
-      <button id="counter" type="button"></button>
-    </div>
-    <p class="read-the-docs">
-      Click on the Vite logo to learn more
-    </p>
-  </div>
-`;
+let paragraph = document.createElement("p");
+paragraph.textContent = "hello world";
 
-setupCounter(document.querySelector("#counter"));
+let button = document.createElement("button");
+button.appendChild(document.createTextNode("button"));
+button.addEventListener("click", () => {
+  console.log("hello");
+});
 
-const currentHost = window.location.host;
-console.log(currentHost);
+app.appendChild(paragraph);
+app.appendChild(button);
