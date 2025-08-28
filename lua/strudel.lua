@@ -24,6 +24,14 @@ function M.setup()
 		end
 	end, {})
 
+	vim.api.nvim_create_user_command("StrudelOpen", function()
+		if M.strudelserver ~= nil then
+			M.strudelserver.open_site()
+		else
+			print("start the strudel server before opening the site")
+		end
+	end, {})
+
 	vim.api.nvim_create_user_command("StrudelQuitServer", function()
 		if M.strudelserver ~= nil then
 			M.strudelserver.quit_server(M.strudelserver.server_handle)

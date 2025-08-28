@@ -87,6 +87,26 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
             })?,
         )?;
     }
+    {
+        let tx = tx.clone();
+        t.set(
+            "open_site",
+            lua.create_function(move |_, _: ()| {
+                let (oneshot_tx, rx) = oneshot::channel();
+                if tx.blocking_send(AppMessage::GetPort(oneshot_tx)).is_err() {
+                    return Err(LuaError::RuntimeError(String::from(
+                        "strudel server rx dropped",
+                    )));
+                }
+                if let Ok(Some(port)) = rx.blocking_recv() {
+                    let url = format!("http://localhost:{port}");
+                    let _ = open::that(url);
+                }
+
+                Ok(())
+            })?,
+        )?;
+    }
     Ok(t)
 }
 
