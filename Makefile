@@ -1,6 +1,8 @@
-lua/strudelserver.so: $(wildcard src/*) strudel-frontend/dist/index.html
-	cargo build --release
+lua/strudelserver.so: target/release/libstrudel.dylib 
 	cp -f target/release/libstrudel.dylib lua/strudelserver.so
+
+target/release/libstrudel.dylib: $(wildcard src/*) strudel-frontend/dist/index.html
+	cargo build --release
 
 strudel-frontend/dist/index.html: $(wildcard strudel-frontend/*)
 	( cd strudel-frontend/; npm run build )
