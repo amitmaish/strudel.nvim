@@ -105,13 +105,8 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     t.set(
         "play",
         lua.create_function(move |_, _: ()| {
-            if broadcast_tx.send(SocketMessage::Play).is_ok() {
-                Ok(String::from("play"))
-            } else {
-                Err(LuaError::RuntimeError(String::from(
-                    "strudel broadcast error",
-                )))
-            }
+            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Playing));
+            Ok(())
         })?,
     )?;
 
@@ -119,7 +114,7 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     t.set(
         "Pause",
         lua.create_function(move |_, _: ()| {
-            let _ = broadcast_tx.send(SocketMessage::Pause);
+            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Paused));
             Ok(())
         })?,
     )?;
@@ -128,7 +123,7 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     t.set(
         "stop",
         lua.create_function(move |_, _: ()| {
-            let _ = broadcast_tx.send(SocketMessage::Stop);
+            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Stopped));
             Ok(())
         })?,
     )?;
@@ -295,8 +290,13 @@ enum AppMessage {
 #[derive(Clone, Serialize, Deserialize)]
 enum SocketMessage {
     Message(String),
-    Play,
-    Pause,
-    Stop,
+    Playback(PlaybackState),
     Error(String),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum PlaybackState {
+    Playing,
+    Paused,
+    Stopped,
 }

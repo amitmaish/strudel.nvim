@@ -27,11 +27,14 @@ click("socket", () => {
 
 	socket.addEventListener("open", (msg) => console.log(msg));
 	socket.addEventListener("message", socket_message_handler);
-	socket.addEventListener("close", (msg) => console.log(msg));
+	socket.addEventListener("close", (_msg) => close());
 });
 
 function socket_message_handler(msg) {
 	console.log(msg);
 	let data = JSON.parse(msg.data);
 	console.log(data);
+	for (const key in data) {
+		console.log(data[key]);
+	}
 }
