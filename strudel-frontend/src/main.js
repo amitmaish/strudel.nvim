@@ -23,11 +23,11 @@ click("stop", () => evaluate("hush()"));
 
 click("socket", () => {
 	let host = window.location.host;
-	console.log("ws://" + host + "/ws");
 	const socket = new WebSocket("ws://" + host + "/ws");
 
 	socket.addEventListener("open", (msg) => console.log(msg));
 	socket.addEventListener("message", socket_message_handler);
+	socket.addEventListener("close", (msg) => console.log(msg));
 });
 
 function socket_message_handler(msg) {

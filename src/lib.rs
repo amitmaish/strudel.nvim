@@ -5,6 +5,7 @@ use axum::extract::{State, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::any;
 use axum::{Router, response::Html, routing::get, serve};
+use futures_util::{SinkExt, StreamExt};
 use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -25,6 +26,7 @@ const ADDR: &str = "localhost:0";
 fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     let mut app = App::new()?;
     let tx_prime = app.get_tx();
+    let broadcast_tx_prime = app.get_broadcast();
 
     let server_thread = thread::spawn(move || {
         app.run()?;
@@ -95,6 +97,38 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
                 let _ = open::that(url);
             }
 
+            Ok(())
+        })?,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    t.set(
+        "play",
+        lua.create_function(move |_, _: ()| {
+            if broadcast_tx.send(SocketMessage::Play).is_ok() {
+                Ok(String::from("play"))
+            } else {
+                Err(LuaError::RuntimeError(String::from(
+                    "strudel broadcast error",
+                )))
+            }
+        })?,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    t.set(
+        "Pause",
+        lua.create_function(move |_, _: ()| {
+            let _ = broadcast_tx.send(SocketMessage::Pause);
+            Ok(())
+        })?,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    t.set(
+        "stop",
+        lua.create_function(move |_, _: ()| {
+            let _ = broadcast_tx.send(SocketMessage::Stop);
             Ok(())
         })?,
     )?;
@@ -196,20 +230,61 @@ impl App {
     pub fn get_tx(&self) -> Sender<AppMessage> {
         self.tx.clone()
     }
+
+    fn get_broadcast(&self) -> broadcast::Sender<SocketMessage> {
+        self.broadcast_tx.clone()
+    }
 }
 
 async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| websocket(socket, state))
 }
 
-async fn websocket(mut socket: WebSocket, AppState { tx: _tx, rx: _rx }: AppState) {
-    _ = socket
+async fn websocket(
+    socket: WebSocket,
+    AppState {
+        tx: _app_tx,
+        rx: mut broadcast_rx,
+    }: AppState,
+) {
+    let (mut socket_tx, mut _socket_rx) = socket.split();
+    _ = socket_tx
         .send(ws::Message::Text(
             serde_json::to_string(&SocketMessage::Message(String::from("hello")))
                 .unwrap_or_else(|_| String::from("message failed to deserialize"))
                 .into(),
         ))
         .await;
+
+    tokio::spawn(async move {
+        loop {
+            let msg = broadcast_rx.recv().await;
+            use broadcast::error::RecvError as e;
+            match msg {
+                Ok(msg) => {
+                    let message = if let Ok(json) = serde_json::to_string(&msg) {
+                        ws::Message::Text(json.into())
+                    } else {
+                        ws::Message::Text("failed to serialize".into())
+                    };
+
+                    _ = socket_tx.send(message).await;
+                }
+                Err(e::Closed) => break,
+                Err(e::Lagged(num)) => {
+                    let message = if let Ok(json) = serde_json::to_string(&SocketMessage::Error(
+                        format!("broadcast lagged by {num} messages"),
+                    )) {
+                        ws::Message::Text(json.into())
+                    } else {
+                        ws::Message::Text("failed to serialize".into())
+                    };
+
+                    _ = socket_tx.send(message).await;
+                }
+            }
+        }
+    });
 }
 
 enum AppMessage {
@@ -220,4 +295,8 @@ enum AppMessage {
 #[derive(Clone, Serialize, Deserialize)]
 enum SocketMessage {
     Message(String),
+    Play,
+    Pause,
+    Stop,
+    Error(String),
 }

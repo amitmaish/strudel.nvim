@@ -32,6 +32,12 @@ function M.setup()
 		end
 	end, {})
 
+	vim.api.nvim_create_user_command("StrudelPlay", function()
+		if M.strudelserver ~= nil then
+			M.strudelserver.play()
+		end
+	end, {})
+
 	vim.api.nvim_create_user_command("StrudelQuitServer", function()
 		if M.strudelserver ~= nil then
 			M.strudelserver.quit_server(M.strudelserver.server_handle)
