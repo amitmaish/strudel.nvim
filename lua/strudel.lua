@@ -48,4 +48,17 @@ function M.setup()
 	end, {})
 end
 
+local current_buffer_as_string = function()
+	local content = vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)
+	return table.concat(content, "\n")
+end
+
+vim.api.nvim_create_user_command("StrudelUpdateCode", function()
+	if M.strudelserver ~= nil then
+		M.strudelserver.update_code(current_buffer_as_string())
+	else
+		print("strudel server not running")
+	end
+end, {})
+
 return M

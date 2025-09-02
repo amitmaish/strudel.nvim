@@ -112,7 +112,7 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
 
     let broadcast_tx = broadcast_tx_prime.clone();
     t.set(
-        "Pause",
+        "pause",
         lua.create_function(move |_, _: ()| {
             let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Paused));
             Ok(())
@@ -124,6 +124,15 @@ fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
         "stop",
         lua.create_function(move |_, _: ()| {
             let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Stopped));
+            Ok(())
+        })?,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    t.set(
+        "update_code",
+        lua.create_function(move |_, code: String| {
+            let _ = broadcast_tx.send(SocketMessage::Code(code));
             Ok(())
         })?,
     )?;
@@ -290,6 +299,7 @@ enum AppMessage {
 #[derive(Clone, Serialize, Deserialize)]
 enum SocketMessage {
     Message(String),
+    Code(String),
     Playback(PlaybackState),
     Error(String),
 }
