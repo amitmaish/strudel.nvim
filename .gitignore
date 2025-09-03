@@ -1,3 +1,6 @@
 /target
-lua/strudelserver.so
+lua/strudel.so
 '
+
+# old
+lua/strudelserver.so

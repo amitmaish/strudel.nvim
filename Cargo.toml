@@ -10,12 +10,12 @@ crate-type = ["cdylib"]
 anyhow = "1.0.99"
 axum = { version = "0.8.4", features = ["ws"] }
 futures-util = "0.3.31"
-mlua = { version = "0.11.2", features = [
-  "anyhow",
-  "luajit",
-  "module",
-  "macros",
-  "async",
+nvim-oxi = { version = "0.6.0", features = [
+  "libuv",
+  "mlua",
+  "neovim-0-11",
+  "neovim-0-10",
+  "neovim-nightly",
 ] }
 open = "5.3.2"
 serde = { version = "1.0.219", features = ["derive"] }

@@ -1,20 +1,31 @@
-use std::{ffi::c_void, thread};
+use std::thread;
 
-use axum::extract::ws::{self, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
-use axum::response::Response;
-use axum::routing::any;
-use axum::{Router, response::Html, routing::get, serve};
+use axum::{
+    Router,
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{self, WebSocket},
+    },
+    response::{Html, Response},
+    routing::{any, get},
+    serve,
+};
 use futures_util::{SinkExt, StreamExt};
-use mlua::prelude::*;
+use nvim_oxi::{
+    api::{
+        self,
+        opts::{CreateAugroupOpts, CreateAutocmdOpts, CreateCommandOpts},
+    },
+    mlua::{self, lua},
+    print,
+};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
 use tokio::{
     fs::File,
     io::AsyncReadExt,
     net::TcpListener,
-    runtime::Runtime,
     sync::{
+        broadcast,
         mpsc::{Receiver, Sender, channel},
         oneshot,
     },
@@ -23,128 +34,164 @@ use tower_http::services::ServeDir;
 
 const ADDR: &str = "localhost:0";
 
-fn start_server(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
-    let mut app = App::new()?;
-    let tx_prime = app.get_tx();
-    let broadcast_tx_prime = app.get_broadcast();
+#[nvim_oxi::plugin]
+fn strudel() -> nvim_oxi::Result<()> {
+    let opts = CreateAugroupOpts::builder().clear(true).build();
+    let strudel_augroup = api::create_augroup("strudel", &opts)?;
 
-    let server_thread = thread::spawn(move || {
-        app.run()?;
-        anyhow::Ok(())
-    });
-
-    let t = lua.create_table()?;
-
-    let server_handle: *mut thread::JoinHandle<Result<(), anyhow::Error>> =
-        Box::into_raw(Box::new(server_thread));
-
-    t.set(
-        "server_handle",
-        LuaValue::LightUserData(LuaLightUserData(server_handle as *mut c_void)),
-    )?;
-
-    let tx = tx_prime.clone();
-    t.set(
-        "quit_server",
-        lua.create_function(move |_, server_handle: LuaLightUserData| {
-            if tx.blocking_send(AppMessage::Quit).is_err() {
-                Err(LuaError::RuntimeError(String::from(
-                    "strudel server rx dropped",
-                )))
-            } else {
-                let handle = server_handle.0 as *mut thread::JoinHandle<Result<(), anyhow::Error>>;
-                let server_thread = unsafe { Box::from_raw(handle) };
-                if let Ok(Ok(_)) = server_thread.join() {
-                    Ok(())
-                } else {
-                    Err(LuaError::RuntimeError(String::from(
-                        "strudel server errored",
-                    )))
+    let augroup = strudel_augroup;
+    let opts = CreateCommandOpts::builder().desc("starts strudel").build();
+    api::create_user_command(
+        "StrudelStart",
+        move |_args| {
+            let running: Result<bool, mlua::Error> = lua().globals().get("strudel_running");
+            match running {
+                Ok(true) => {
+                    print!("strudel already running");
+                    return;
+                }
+                _ => {
+                    _ = lua().globals().set("strudel_running", true);
                 }
             }
-        })?,
+
+            let strudel = App::new();
+
+            _ = nvim_setup(strudel.get_tx(), strudel.get_broadcast());
+
+            let tx = strudel.get_tx();
+            let opts = CreateAutocmdOpts::builder()
+                .group(augroup)
+                .callback(move |_args| {
+                    _ = tx.blocking_send(AppMessage::Quit);
+                    _ = lua().globals().set("strudel_running", false);
+                    nvim_oxi::Result::Ok(true)
+                })
+                .build();
+            _ = api::create_autocmd(["ExitPre"], &opts);
+
+            _ = thread::spawn(move || strudel.run());
+        },
+        &opts,
     )?;
 
-    let tx = tx_prime.clone();
-    t.set(
-        "get_port",
-        lua.create_function(move |_, _: ()| {
-            let (oneshot_tx, rx) = oneshot::channel();
-            if tx.blocking_send(AppMessage::GetPort(oneshot_tx)).is_err() {
-                Err(LuaError::RuntimeError(String::from(
-                    "strudel server rx dropped",
-                )))
-            } else if let Ok(Some(value)) = rx.blocking_recv() {
-                Ok(LuaValue::Integer(value as LuaInteger))
-            } else {
-                Ok(LuaValue::Nil)
-            }
-        })?,
-    )?;
-
-    let tx = tx_prime.clone();
-    t.set(
-        "open_site",
-        lua.create_function(move |_, _: ()| {
-            let (oneshot_tx, rx) = oneshot::channel();
-            if tx.blocking_send(AppMessage::GetPort(oneshot_tx)).is_err() {
-                return Err(LuaError::RuntimeError(String::from(
-                    "strudel server rx dropped",
-                )));
-            }
-            if let Ok(Some(port)) = rx.blocking_recv() {
-                let url = format!("http://localhost:{port}");
-                let _ = open::that(url);
-            }
-
-            Ok(())
-        })?,
-    )?;
-
-    let broadcast_tx = broadcast_tx_prime.clone();
-    t.set(
-        "play",
-        lua.create_function(move |_, _: ()| {
-            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Playing));
-            Ok(())
-        })?,
-    )?;
-
-    let broadcast_tx = broadcast_tx_prime.clone();
-    t.set(
-        "pause",
-        lua.create_function(move |_, _: ()| {
-            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Paused));
-            Ok(())
-        })?,
-    )?;
-
-    let broadcast_tx = broadcast_tx_prime.clone();
-    t.set(
-        "stop",
-        lua.create_function(move |_, _: ()| {
-            let _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Stopped));
-            Ok(())
-        })?,
-    )?;
-
-    let broadcast_tx = broadcast_tx_prime.clone();
-    t.set(
-        "update_code",
-        lua.create_function(move |_, code: String| {
-            let _ = broadcast_tx.send(SocketMessage::Code(code));
-            Ok(())
-        })?,
-    )?;
-
-    Ok(t)
+    Ok(())
 }
 
-#[mlua::lua_module]
-fn strudelserver(lua: &Lua) -> LuaResult<LuaTable> {
-    let exports = lua.create_table()?;
-    exports.set("start_server", lua.create_function(start_server)?)?;
-    Ok(exports)
+/// this will run in the nvim event loop on the main thread
+fn nvim_setup(
+    tx_prime: Sender<AppMessage>,
+    broadcast_tx_prime: broadcast::Sender<SocketMessage>,
+) -> nvim_oxi::Result<()> {
+    let tx = tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("returns the port of the strudel server")
+        .build();
+    api::create_user_command(
+        "StrudelGetPort",
+        move |_args| {
+            let (oneshot_tx, rx) = oneshot::channel();
+            if tx.blocking_send(AppMessage::GetPort(oneshot_tx)).is_err() {
+                print!("couldn't get port");
+            } else if let Ok(Some(port)) = rx.blocking_recv() {
+                print!("{port}");
+            } else {
+                print!("couldn't get port");
+            }
+        },
+        &opts,
+    )?;
+
+    let tx = tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("quits the strudel server")
+        .build();
+    api::create_user_command(
+        "StrudelQuitServer",
+        move |_args| {
+            if tx.blocking_send(AppMessage::Quit).is_err() {
+                print!("failed to quit server");
+            }
+            _ = lua().globals().set("strudel_running", false);
+        },
+        &opts,
+    )?;
+
+    let tx = tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("opens the strudel client in the default browser")
+        .build();
+    api::create_user_command(
+        "StrudelOpen",
+        move |_args| {
+            let (oneshot_tx, rx) = oneshot::channel();
+            if tx.blocking_send(AppMessage::GetPort(oneshot_tx)).is_err() {
+                print!("strudel server rx dropped");
+            } else if let Ok(Some(port)) = rx.blocking_recv() {
+                let url = format!("http://localhost:{port}");
+                _ = open::that(url);
+            }
+        },
+        &opts,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("starts playback on the strudel client")
+        .build();
+    api::create_user_command(
+        "StrudelPlay",
+        move |_args| _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Playing)),
+        &opts,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("pauses playback on the strudel client")
+        .build();
+    api::create_user_command(
+        "StrudelPause",
+        move |_args| _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Paused)),
+        &opts,
+    )?;
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("stops playback on the strudel client")
+        .build();
+    api::create_user_command(
+        "StrudelStop",
+        move |_args| _ = broadcast_tx.send(SocketMessage::Playback(PlaybackState::Stopped)),
+        &opts,
+    )?;
+
+    let current_buffer_as_string = || {
+        let current_buffer = api::get_current_buf();
+        let lines = current_buffer.get_lines(.., false)?;
+
+        let lines: Vec<String> = lines.into_iter().map(|s| s.to_string()).collect();
+        let lines = lines.join("\n");
+
+        anyhow::Ok(lines)
+    };
+
+    let broadcast_tx = broadcast_tx_prime.clone();
+    let opts = CreateCommandOpts::builder()
+        .desc("updates the code strudel is executing")
+        .build();
+    api::create_user_command(
+        "StrudelUpdateCode",
+        move |_args| {
+            if let Ok(code) = current_buffer_as_string() {
+                _ = broadcast_tx.send(SocketMessage::Code(code));
+            } else {
+                print!("couldn't get the current buffer")
+            }
+        },
+        &opts,
+    )?;
+
+    Ok(())
 }
 
 struct App {
@@ -169,66 +216,62 @@ impl Clone for AppState {
 }
 
 impl App {
-    fn new() -> anyhow::Result<Self> {
+    fn new() -> Self {
         let (tx, rx) = channel(16);
         let (broadcast_tx, _) = broadcast::channel(16);
-        Ok(Self {
+        Self {
             port: None,
             rx,
             tx,
             broadcast_tx,
-        })
+        }
     }
 
-    fn run(&mut self) -> anyhow::Result<()> {
-        let runtime = Runtime::new()?;
-        runtime.block_on(async {
-            let mut file = File::open("../strudel-frontend/dist/index.html").await?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents).await?;
+    #[tokio::main]
+    async fn run(mut self) -> anyhow::Result<()> {
+        let mut file = File::open("../strudel-frontend/dist/index.html").await?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).await?;
 
-            let app = Router::new()
-                .route("/", get(|| async move { Html::from(contents) }))
-                .route("/ws", any(websocket_handler))
-                .with_state(AppState {
-                    tx: self.tx.clone(),
-                    rx: self.broadcast_tx.subscribe(),
-                })
-                .nest_service(
-                    "/assets/",
-                    ServeDir::new("../strudel-frontend/dist/assets/"),
-                );
+        let app = Router::new()
+            .route("/", get(|| async move { Html::from(contents) }))
+            .route("/ws", any(websocket_handler))
+            .with_state(AppState {
+                tx: self.tx.clone(),
+                rx: self.broadcast_tx.subscribe(),
+            })
+            .nest_service(
+                "/assets/",
+                ServeDir::new("../strudel-frontend/dist/assets/"),
+            );
 
-            let listener = TcpListener::bind(ADDR).await?;
-            self.port = Some(listener.local_addr()?.port());
-            let (shutdown_tx, shutdown_rx) = channel(1);
+        let listener = TcpListener::bind(ADDR).await?;
+        self.port = Some(listener.local_addr()?.port());
+        let (shutdown_tx, shutdown_rx) = channel(1);
 
-            async fn shutdown(mut shutdown_rx: Receiver<()>) {
-                let _ = shutdown_rx.recv().await;
-            }
+        async fn shutdown(mut shutdown_rx: Receiver<()>) {
+            let _ = shutdown_rx.recv().await;
+        }
 
-            runtime.spawn(async {
-                serve(listener, app)
-                    .with_graceful_shutdown(shutdown(shutdown_rx))
-                    .await
-            });
+        tokio::spawn(async {
+            serve(listener, app)
+                .with_graceful_shutdown(shutdown(shutdown_rx))
+                .await
+        });
 
-            while let Some(message) = self.rx.recv().await {
-                match message {
-                    AppMessage::GetPort(oneshot) => {
-                        let _ = oneshot.send(self.port);
-                    }
-                    AppMessage::Quit => {
-                        let _ = shutdown_tx.send(()).await;
-                        break;
-                    }
+        while let Some(message) = self.rx.recv().await {
+            match message {
+                AppMessage::GetPort(oneshot) => {
+                    let _ = oneshot.send(self.port);
+                }
+                AppMessage::Quit => {
+                    let _ = shutdown_tx.send(()).await;
+                    break;
                 }
             }
+        }
 
-            anyhow::Ok(())
-        })?;
-
-        Ok(())
+        anyhow::Ok(())
     }
 
     pub fn get_tx(&self) -> Sender<AppMessage> {

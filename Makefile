@@ -1,5 +1,5 @@
-lua/strudelserver.so: target/release/libstrudel.dylib 
-	cp -f target/release/libstrudel.dylib lua/strudelserver.so
+lua/strudel.so: target/release/libstrudel.dylib 
+	cp -f target/release/libstrudel.dylib lua/strudel.so
 
 target/release/libstrudel.dylib: $(wildcard src/*) strudel-frontend/dist/index.html
 	cargo build --release
@@ -10,7 +10,7 @@ strudel-frontend/dist/index.html: $(wildcard strudel-frontend/*)
 .PHONEY: clean
 clean:
 	cargo clean
-	rm lua/strudelserver.so
+	rm lua/strudel.so
 
 .PHONEY: webdev
 webdev:
