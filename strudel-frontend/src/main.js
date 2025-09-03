@@ -27,7 +27,7 @@ click("socket", () => {
 
 	socket.addEventListener("open", (msg) => console.log(msg));
 	socket.addEventListener("message", socket_message_handler);
-	socket.addEventListener("close", (_msg) => close());
+	socket.addEventListener("close", (_msg) => console.log("socket closed"));
 });
 
 function socket_message_handler(msg) {
